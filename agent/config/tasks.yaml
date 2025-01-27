@@ -1,0 +1,41 @@
+Hotel_Search_task:
+  description: >
+    As {hotel_location}'s top hotel finder, you are tasked with finding the most suitable hotels based on user input.
+    You need to collect detailed information about the user traveling to this region and the security of the hotel.
+    accessibility to public transport, proximity to the airport and overall suitability to user needs.
+    The price of the hotel should fit the user's budget and the length of stay should be taken into account.
+
+    user information:
+    - Hotel Location: {hotel_location}
+    - Hotel daily price: {hotel_daily_price}
+    - How long is the trip: {trip_duration}
+    - Information about the people who will stay: {personal_information}
+    - User interest: {user_interest}
+  expected_output: >
+    I would like to list the suitable hotels you have found. The hotel's location, transportation, certificates,
+    Sort advantages and disadvantages, previous user reviews and stars!
+
+review_analysis_task:
+  description: 
+    Analyze customer comments of hotels! Examine and analyze customers' positive and negative comments in detail.
+  expected_output: >
+    Detailed sentiment analysis report with key positive/negative points
+
+hotel_certification_specialist_task:
+  description: >
+    Check that the hotel has certificates such as approved Quality Management System, Security Certificate,
+    Fire Safety Certificate, Occupational Health and Safety Management System.
+    In terms of life and property safety, you should do detailed research about the hotel.
+  expected_output: > 
+    Certificate validation report with expiration dates and issuing authorities
+
+accessibility_task:
+  description: >
+    Research whether hotels are user-friendly for disabled people. You should find the most suitable hotel for disabled individuals.
+  expected_output: >
+    Accessibility audit report with compliance details
+
+benefits_analysis_task:
+  description: I want you to list and compare the advantages offered by hotels and find the most suitable one.
+  expected_output: I want the output to be in json format. It is readable for the user. Let the latest version of hotels come out in the most organized way.
+
