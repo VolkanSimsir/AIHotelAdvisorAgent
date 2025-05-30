@@ -31,12 +31,14 @@ pip install -e .
 ```
 
 3. Set your API keys in the '.env' file
-
+``` bash
+SERPER_API_KEY = ""
+``` 
 ## Usage
 
 To start the application, run:
 ```bash
-python main.py
+streamlit run streamlit_app.py
 ```
 
 ## Project Structure
