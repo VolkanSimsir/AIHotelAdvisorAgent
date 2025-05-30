@@ -1,0 +1,5 @@
+streamlit>=1.30.0
+crewai>=0.28.0
+pydantic>=1.10.0
+crewai-tools>=0.1.0
+litellm>=1.30.0
