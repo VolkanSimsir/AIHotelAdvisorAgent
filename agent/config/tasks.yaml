@@ -1,4 +1,4 @@
-Hotel_Search_task:
+hotel_search_task:
   description: >
     As {hotel_location}'s top hotel finder, you are tasked with finding the most suitable hotels based on user input.
     You need to collect detailed information about the user traveling to this region and the security of the hotel.
@@ -21,7 +21,7 @@ review_analysis_task:
   expected_output: >
     Detailed sentiment analysis report with key positive/negative points
 
-hotel_certification_specialist_task:
+certification_check_task:
   description: >
     Check that the hotel has certificates such as approved Quality Management System, Security Certificate,
     Fire Safety Certificate, Occupational Health and Safety Management System.
@@ -29,7 +29,7 @@ hotel_certification_specialist_task:
   expected_output: > 
     Certificate validation report with expiration dates and issuing authorities
 
-accessibility_task:
+accessibility_check_task:
   description: >
     Research whether hotels are user-friendly for disabled people. You should find the most suitable hotel for disabled individuals.
   expected_output: >

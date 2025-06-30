@@ -1,9 +1,8 @@
 import streamlit as st
 import json
-import sys
-import os
+import re
+from typing import Dict, List, Any
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 st.set_page_config(
     page_title="AI Hotel Advisor",
@@ -11,233 +10,320 @@ st.set_page_config(
     layout="wide"
 )
 
-# App header
-st.title("🏨 AI Hotel Advisor")
-st.markdown("Find the perfect hotel for your stay based on your preferences.")
+def parse_hotel_result(result):
+    """Parse the hotel advisor result and extract hotel information"""
+    hotels = []
+    
+    try:
+        if hasattr(result, 'pydantic'):
+            pydantic_result = result.pydantic
+            if hasattr(pydantic_result, 'recommended_hotels'):
+                for hotel in pydantic_result.recommended_hotels:
+                    if hasattr(hotel, 'dict'):
+                        hotels.append(hotel.dict())
+                    elif hasattr(hotel, 'model_dump'):
+                        hotels.append(hotel.model_dump())
+                    else:
+                        hotel_dict = {}
+                        for field in hotel.__fields__:
+                            hotel_dict[field] = getattr(hotel, field, None)
+                        hotels.append(hotel_dict)
+                return hotels
+        
+        elif hasattr(result, 'raw'):
+            return parse_hotel_result(result.raw)
+        
+        elif isinstance(result, str):
+            if 'recommended_hotels=' in result:
+                start_idx = result.find('recommended_hotels=')
+                if start_idx != -1:
+                    hotels_str = result[start_idx + len('recommended_hotels='):]
+                    
+                    bracket_count = 0
+                    end_idx = 0
+                    for i, char in enumerate(hotels_str):
+                        if char == '[':
+                            bracket_count += 1
+                        elif char == ']':
+                            bracket_count -= 1
+                            if bracket_count == 0:
+                                end_idx = i + 1
+                                break
+                    
+                    if end_idx > 0:
+                        hotels_str = hotels_str[:end_idx]
+                        
+                        hotel_pattern = r"HotelInfo\(([^)]+(?:\)[^)]*)*)\)"
+                        matches = re.findall(hotel_pattern, hotels_str)
+                        
+                        for match in matches:
+                            hotel_data = parse_hotel_info_string(match)
+                            if hotel_data:
+                                hotels.append(hotel_data)
+        
+        elif isinstance(result, dict):
+            if "recommended_hotels" in result:
+                hotels_data = result["recommended_hotels"]
+                if isinstance(hotels_data, list):
+                    for hotel in hotels_data:
+                        if hasattr(hotel, 'dict'):
+                            hotels.append(hotel.dict())
+                        elif hasattr(hotel, 'model_dump'):
+                            hotels.append(hotel.model_dump())
+                        elif isinstance(hotel, dict):
+                            hotels.append(hotel)
+                        else:
+                            hotel_dict = {}
+                            for attr in dir(hotel):
+                                if not attr.startswith('_') and not callable(getattr(hotel, attr)):
+                                    hotel_dict[attr] = getattr(hotel, attr)
+                            hotels.append(hotel_dict)
+                else:
+                    hotels = [hotels_data]
+            else:
+                hotels = [result]
+        
+        elif isinstance(result, list):
+            hotels = result
+        
+        return hotels
+    
+    except Exception as e:
+        st.error(f"Sonuç parse edilirken hata: {e}")
+        st.code(f"Hata detayı: {str(e)}")
+        return []
 
-def get_user_preferences():
-    """Get user preferences from the sidebar."""
-    with st.sidebar:
-        st.header("Your Preferences")
+def parse_hotel_info_string(hotel_str):
+    """Parse a single HotelInfo string into a dictionary"""
+    hotel_data = {}
+    
+    try:
+        parts = []
+        current_part = ""
+        bracket_count = 0
+        quote_count = 0
         
-        # Location input
-        hotel_location = st.text_input("Destination", value="İstanbul")
+        for char in hotel_str:
+            if char == '[':
+                bracket_count += 1
+            elif char == ']':
+                bracket_count -= 1
+            elif char == "'":
+                quote_count = (quote_count + 1) % 2
+            elif char == ',' and bracket_count == 0 and quote_count == 0:
+                parts.append(current_part.strip())
+                current_part = ""
+                continue
+            
+            current_part += char
         
-        # Price range
-        hotel_daily_price = st.slider("Maximum Daily Price (TL)", 
-                                 min_value=100, 
-                                 max_value=5000, 
-                                 value=500,
-                                 step=100)
+        if current_part.strip():
+            parts.append(current_part.strip())
         
-        # Trip duration
-        trip_duration_days = st.slider("Trip Duration (Days)", 
-                                  min_value=1, 
-                                  max_value=30, 
-                                  value=5)
-        trip_duration = f"{trip_duration_days} days"
+        for part in parts:
+            if '=' in part:
+                key, value = part.split('=', 1)
+                key = key.strip()
+                value = value.strip()
+                
+                if value.startswith("'") and value.endswith("'"):
+                    value = value[1:-1]
+                elif value.startswith('[') and value.endswith(']'):
+                    list_content = value[1:-1]
+                    if list_content:
+                        items = []
+                        current_item = ""
+                        in_quotes = False
+                        
+                        for char in list_content:
+                            if char == "'" and (not current_item or current_item[-1] != '\\'):
+                                in_quotes = not in_quotes
+                            elif char == ',' and not in_quotes:
+                                if current_item.strip():
+                                    items.append(current_item.strip().strip("'"))
+                                current_item = ""
+                            else:
+                                current_item += char
+                        
+                        if current_item.strip():
+                            items.append(current_item.strip().strip("'"))
+                        
+                        value = items
+                    else:
+                        value = []
+                elif value.replace('.', '').isdigit():
+                    value = float(value) if '.' in value else int(value)
+                
+                hotel_data[key] = value
         
-        # Group composition
-        col1, col2 = st.columns(2)
+        return hotel_data
+    
+    except Exception as e:
+        st.error(f"Hotel string parse hatası: {e}")
+        return {}
+
+def display_hotel_card(hotel, index):
+    """Display a single hotel as a card"""
+    
+    hotel_name = hotel.get('hotel_name', f'Otel {index}')
+    location = hotel.get('hotel_location', 'Konum belirtilmemiş')
+    price = hotel.get('hotel_daily_price', 'Fiyat belirtilmemiş')
+    certificates = hotel.get('hotel_certificates', [])
+    accessibility = hotel.get('accessibility_features', [])
+    benefits = hotel.get('benefits', [])
+    review_score = hotel.get('review_score', 'N/A')
+    
+    # Create a card-like container
+    with st.container():
+        st.markdown("---")
+        
+        col1, col2, col3 = st.columns([3, 1, 1])
+        
         with col1:
-            adults = st.number_input("Adults", min_value=1, max_value=10, value=2)
+            st.subheader(f"🏨 {hotel_name}")
+            st.write(f"📍 **Konum:** {location}")
+        
         with col2:
-            children = st.number_input("Children", min_value=0, max_value=10, value=1)
-        
-        personal_information = f"{adults} adults, {children} children"
-        
-        # User interests
-        interest_options = [
-            "Historical sites", 
-            "Family-friendly", 
-            "Beach", 
-            "Nightlife", 
-            "Shopping", 
-            "Cultural experiences",
-            "Nature",
-            "Business travel"
-        ]
-        
-        user_interests = st.multiselect(
-            "Your Interests", 
-            options=interest_options,
-            default=["Historical sites", "Family-friendly"]
-        )
-        
-        user_interest = ", ".join(user_interests)
-        
-        # Search button
-        search_button = st.button("Find Hotels", type="primary", use_container_width=True)
-    
-    return {
-        'hotel_location': hotel_location,
-        'hotel_daily_price': hotel_daily_price,
-        'trip_duration': trip_duration,
-        'personal_information': personal_information,
-        'user_interest': user_interest,
-        'search_button': search_button
-    }
-
-def search_hotels(prefs):
-    """Search for hotels based on user preferences."""
-    st.session_state.is_loading = True
-    
-    inputs = {
-        "hotel_location": prefs['hotel_location'],
-        "hotel_daily_price": str(prefs['hotel_daily_price']),
-        "trip_duration": prefs['trip_duration'],
-        "personal_information": prefs['personal_information'],
-        "user_interest": prefs['user_interest']
-    }
-    
-    with st.spinner("🔍 Our AI agents are searching for the best hotels for you..."):
-        try:
-            # Import here to avoid the import error at startup time
-            from agent.my_crew import AIHotelAdvisor
-            
-            # Call the AI Hotel Advisor crew
-            result = AIHotelAdvisor().crew().kickoff(inputs=inputs)
-            
-            # Handle different result formats
-            if isinstance(result, str):
-                try:
-                    # Sometimes CrewAI returns JSON strings
-                    result_data = json.loads(result)
-                    if "recommended_hotels" in result_data:
-                        st.session_state.hotel_results = result_data["recommended_hotels"]
-                    else:
-                        st.session_state.hotel_results = result_data
-                except json.JSONDecodeError:
-                    # Handle raw string output
-                    st.session_state.hotel_results = result
+            if isinstance(price, (int, float)):
+                st.metric("💰 Günlük Fiyat", f"${price}")
             else:
-                # Handle structured output
-                st.session_state.hotel_results = result
-                
-        except Exception as e:
-            st.error(f"An error occurred: {str(e)}")
-            import traceback
-            st.code(traceback.format_exc(), language="python")
-            st.session_state.hotel_results = None
-    
-    st.session_state.is_loading = False
-
-def display_hotels():
-    """Display the hotel results in a user-friendly format."""
-    if not st.session_state.hotel_results:
-        return
+                st.metric("💰 Günlük Fiyat", str(price))
         
-    st.header("🌟 Recommended Hotels")
-    
-    results = st.session_state.hotel_results
-    
-    # Function to safely get a value from dictionary with default
-    def get_value(data, key, default="N/A"):
-        value = data.get(key, default)
-        return value if value not in [None, "", "N/A"] else default
-    
-    # Handle different result formats
-    if isinstance(results, str):
-        try:
-            parsed_results = json.loads(results)
-            if isinstance(parsed_results, list):
-                results = parsed_results
-            elif "recommended_hotels" in parsed_results:
-                results = parsed_results["recommended_hotels"]
+        with col3:
+            if review_score != 'N/A':
+                st.metric("⭐ Puan", f"{review_score}/10")
             else:
-                st.warning("No hotel data found in the response.")
-                st.write(results)
-                return
-        except json.JSONDecodeError:
-            st.warning("Unable to parse the response. Showing raw output:")
-            st.write(results)
-            return
-    
-    
-    if isinstance(results, list) and results:
-        for i, hotel in enumerate(results):
-            with st.container():
-                st.markdown(f"### {i+1}. {get_value(hotel, 'hotel_name', 'Hotel')}")
-                
-                
-                col1, col2 = st.columns([2, 1])
-                
-                with col1:
-                    
-                    st.markdown(f"**Location:** {get_value(hotel, 'hotel_location')}")
-                    st.markdown(f"**Price:** {get_value(hotel, 'hotel_daily_price')} TL/night")
-                    st.markdown(f"**Rating:** {get_value(hotel, 'review_score')}/10")
-                    
-                    
-                    if 'description' in hotel:
-                        st.markdown("---")
-                        st.markdown(get_value(hotel, 'description'))
-                
-                with col2:
-                    
-                    if 'image_url' in hotel:
-                        st.image(hotel['image_url'], use_column_width=True)
-                    else:
-                        st.image("https://via.placeholder.com/300x200?text=Hotel+Image", 
-                               use_column_width=True)
-                
-                n
-                st.markdown("---")
-                st.markdown("#### 🏨 Amenities")
-                
-                
-                amenities = hotel.get('benefits', [])
-                if amenities and isinstance(amenities, list):
-                    cols = st.columns(4)  # 4 columns for amenities
-                    for idx, amenity in enumerate(amenities):
-                        cols[idx % 4].markdown(f"✓ {amenity}")
-                
-                # Certificates and accessibility features
-                certs = hotel.get('hotel_certificates', [])
-                if certs and isinstance(certs, list):
-                    st.markdown("#### 🏆 Certifications")
-                    st.markdown(", ".join([f"`{cert}`" for cert in certs]))
-                
-                access = hotel.get('accessibility_features', [])
-                if access and isinstance(access, list):
-                    st.markdown("#### ♿ Accessibility Features")
-                    st.markdown(", ".join([f"`{feature}`" for feature in access]))
-                
-                # Add space between hotels
-                st.markdown("")
-                st.markdown("---")
-                st.markdown("")
-    
-    elif not results:
-        st.warning("No hotels found matching your criteria. Please try adjusting your search.")
-    else:
-        st.warning("Unexpected response format. Please try again.")
-        st.json(results)
+                st.metric("⭐ Puan", "Değerlendirme yok")
+        
+        # Details row
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if benefits:
+                st.write("**🎯 Otel İmkanları:**")
+                for benefit in benefits[:5]:  
+                    st.write(f"✅ {benefit}")
+                if len(benefits) > 5:
+                    st.write(f"... ve {len(benefits) - 5} imkan daha")
+        
+        with col2:
+            if accessibility:
+                st.write("**♿ Erişilebilirlik:**")
+                for feature in accessibility[:4]: 
+                    st.write(f"✅ {feature}")
+                if len(accessibility) > 4:
+                    st.write(f"... ve {len(accessibility) - 4} özellik daha")
+        
+        with col3:
+            if certificates:
+                st.write("**📜 Sertifikalar:**")
+                for cert in certificates[:3]: 
+                    st.write(f"🏆 {cert}")
+                if len(certificates) > 3:
+                    st.write(f"... ve {len(certificates) - 3} sertifika daha")
 
-# Main application flow
 def main():
-   
-    if 'hotel_results' not in st.session_state:
-        st.session_state.hotel_results = None
-    if 'is_loading' not in st.session_state:
-        st.session_state.is_loading = False
+    st.title("🏨 AI Hotel Advisor")
+    st.write("Yapay zeka destekli otel önerisi alın")
     
-    # Get user preferences from the sidebar
-    prefs = get_user_preferences()
+    st.sidebar.header("Arama Kriterleri")
     
-    # Trigger search on button click
-    if prefs['search_button']:
-        search_hotels(prefs)
+    location = st.sidebar.text_input("Şehir", value="İstanbul")
+    budget = st.sidebar.number_input("Günlük Bütçe (TL)", min_value=50, max_value=5000, value=500)
+    duration = st.sidebar.text_input("Kalış Süresi", value="5 gün")
+    guests = st.sidebar.text_input("Misafir Bilgisi", value="2 yetişkin, 1 çocuk")
+    interests = st.sidebar.text_area("İlgi Alanları", value="Tarihi yerler, aile dostu")
+    search_button = st.sidebar.button("Otel Ara", type="primary")
     
-    # Display loading indicator
-    if st.session_state.is_loading:
-        st.info("Searching for hotels... This may take a few minutes.")
+    # Main content
+    if search_button:
+        if location and budget and duration and guests:
+            with st.spinner("Oteller araştırılıyor..."):
+                inputs = {
+                    "hotel_location": location,
+                    "hotel_daily_price": str(budget),
+                    "trip_duration": duration,
+                    "personal_information": guests,
+                    "user_interest": interests
+                }
+                
+                try:
+                    result = run_hotel_advisor(inputs)
+                    
+                    if result:
+                        hotels = parse_hotel_result(result)
+                        
+                        if hotels:
+                            st.success(f"🎉 {len(hotels)} otel bulundu!")
+                            
+                            st.info(f"📍 **{location}** şehrinde **₺{budget}** bütçe ile **{duration}** için **{guests}** misafir sayısına uygun oteller")
+
+                            st.header("🏨 Önerilen Oteller")
+                            
+                            try:
+                                hotels_sorted = sorted(hotels, key=lambda x: float(x.get('hotel_daily_price', 999999)))
+                            except:
+                                hotels_sorted = hotels
+                            
+                            for i, hotel in enumerate(hotels_sorted, 1):
+                                display_hotel_card(hotel, i)
+                        
+                        else:
+                            st.warning("⚠️ Otel bilgileri parse edilemedi.")
+                            
+                            st.write("**Debug Bilgisi:**")
+                            st.write(f"Result türü: {type(result)}")
+                            
+                            if hasattr(result, '__dict__'):
+                                st.write("Result attributes:")
+                                for attr in dir(result):
+                                    if not attr.startswith('_'):
+                                        try:
+                                            value = getattr(result, attr)
+                                            if not callable(value):
+                                                st.write(f"- {attr}: {type(value)}")
+                                        except:
+                                            pass
+                            
+                            st.write("**Ham Sonuç:**")
+                            with st.expander("Detayları Göster"):
+                                st.code(str(result))
+                    
+                    else:
+                        st.error("❌ Otel araması başarısız oldu.")
+                
+                except Exception as e:
+                    st.error(f"❌ Hata oluştu: {str(e)}")
+                    with st.expander("Hata Detayları"):
+                        st.code(str(e))
+        else:
+            st.warning("⚠️ Lütfen tüm alanları doldurun.")
     
-    # Display results or initial instructions
-    if st.session_state.hotel_results:
-        display_hotels()
-    elif not st.session_state.is_loading:
-        st.info("👈 Set your preferences in the sidebar and click 'Find Hotels' to get personalized hotel recommendations.")
+    else:
+        st.info("👈 Sol menüden arama kriterlerinizi girin ve 'Otel Ara' butonuna tıklayın.")
+        
+
+def run_hotel_advisor(inputs):
+    """Run hotel advisor with inputs"""
+    try:
+        from agent.my_crew import AIHotelAdvisor
+        advisor = AIHotelAdvisor()
+        st.write(f"📍 Aranan şehir: {inputs['hotel_location']}")
+        st.write(f"💰 Bütçe: {inputs['hotel_daily_price']} TL")
+        
+        result = advisor.crew().kickoff(inputs=inputs)
+        
+        st.write("✅ Arama tamamlandı!")
+        return result
+        
+    except ImportError as e:
+        st.error(f"Import hatası: {e}")
+        return None
+    except Exception as e:
+        st.error(f"Crew hatası: {e}")
+        st.write("Hata detayları:")
+        st.code(str(e))
+        return None
 
 if __name__ == "__main__":
     main()

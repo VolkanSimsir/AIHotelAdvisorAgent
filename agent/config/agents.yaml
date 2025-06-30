@@ -1,4 +1,4 @@
-Hotel_Search_Agent:
+hotel_search_agent:
   role: >
    Best Hotel Search
   goal: >
@@ -14,7 +14,7 @@ review_analysis_agent:
   backstory: >
    You are an expert analyst who interprets and analyzes customer comments to find the best hotel.
 
-hotel_certification_specialist_agent:
+certification_specialist_agent:
   role: >
    Hotel Certification Specialist
   goal: >
